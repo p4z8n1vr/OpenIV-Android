@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="surface">#F4F6F2</color>
+    <color name="surface_card">#FFFFFF</color>
+    <color name="ink">#162620</color>
+    <color name="muted">#4D6057</color>
+    <color name="accent">#216354</color>
+    <color name="progress_scrim">#9924312C</color>
+</resources>

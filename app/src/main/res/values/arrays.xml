@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <array name="archive_action_labels" translatable="false">
+        <item>@string/archive_info</item>
+        <item>@string/add_file</item>
+        <item>@string/new_text</item>
+        <item>@string/extract_folder</item>
+        <item>@string/save_as</item>
+    </array>
+</resources>

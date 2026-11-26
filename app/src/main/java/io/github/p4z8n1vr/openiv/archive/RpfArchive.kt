@@ -1,9 +1,9 @@
 package io.github.p4z8n1vr.openiv.archive
 
 import io.github.p4z8n1vr.openiv.nativeio.NativeDeflate
+import io.github.p4z8n1vr.openiv.nativeio.NativeDeflateException
 import java.io.ByteArrayOutputStream
 import java.io.File
-import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.io.RandomAccessFile
@@ -55,6 +55,12 @@ internal data class Payload(
     val updateResourceSizeHeader: Boolean = false,
 )
 
+enum class RpfEncryption(val displayName: String) {
+    NONE("Unencrypted"),
+    OPEN("OPEN"),
+    AES("AES"),
+}
+
 /** Edits an RPF7 tree in memory. The caller owns its input files and destination streams. */
 class RpfArchive private constructor(
     private val file: File,
@@ -69,12 +75,14 @@ class RpfArchive private constructor(
     var hasChanges: Boolean = false
         private set
 
-    val encryptionName: String
+    val encryptionMode: RpfEncryption
         get() = when (encryption) {
-            ENCRYPTION_AES -> "AES"
-            ENCRYPTION_OPEN -> "OPEN"
-            else -> "Unencrypted"
+            ENCRYPTION_AES -> RpfEncryption.AES
+            ENCRYPTION_OPEN -> RpfEncryption.OPEN
+            else -> RpfEncryption.NONE
         }
+
+    val encryptionName: String get() = encryptionMode.displayName
 
     /** Extracts decoded binary data or an RSC7 resource with its stored payload. */
     fun extract(entry: RpfFile, output: OutputStream) {
@@ -89,7 +97,10 @@ class RpfArchive private constructor(
 
             val input = if (entry.isEntryEncrypted) {
                 if (encryption != ENCRYPTION_AES || aesKey == null) {
-                    throw IOException("This binary entry uses unsupported encryption.")
+                    throw RpfException(
+                        RpfErrorCode.ENTRY_ENCRYPTION_UNSUPPORTED,
+                        "This binary entry uses unsupported encryption.",
+                    )
                 }
                 val encryptedSize = payload.storedSize - payload.storedSize % AES_BLOCK_SIZE
                 val encrypted = ArchiveSlice(source, encryptedSize)
@@ -102,7 +113,11 @@ class RpfArchive private constructor(
                 if (payload.packedSize == 0) {
                     copyExactly(it, output, payload.storedSize, ByteArray(COPY_BUFFER_SIZE))
                 } else {
-                    NativeDeflate.inflate(it, output, payload.storedSize, payload.logicalSize, payload.logicalSize)
+                    try {
+                        NativeDeflate.inflate(it, output, payload.storedSize, payload.logicalSize, payload.logicalSize)
+                    } catch (exception: NativeDeflateException) {
+                        throw RpfException(RpfErrorCode.DEFLATE_FAILED, exception.message, exception)
+                    }
                 }
             }
         }
@@ -110,11 +125,15 @@ class RpfArchive private constructor(
 
     fun rename(entry: RpfEntry, name: String) {
         requireMember(entry)
-        val parent = entry.parent ?: throw IOException("The archive root cannot be renamed.")
+        val parent = entry.parent
+            ?: throw RpfException(RpfErrorCode.ROOT_RENAME_FORBIDDEN, "The archive root cannot be renamed.")
         if (entry.name == name) return
         val encoded = validateNewName(parent, name, entry)
         if (entry is RpfFile && entry.isResource && entry.isEntryEncrypted != name.isScriptResource()) {
-            throw IOException("Renaming this resource would change its encryption classification.")
+            throw RpfException(
+                RpfErrorCode.RESOURCE_ENCRYPTION_RENAME,
+                "Renaming this resource would change its encryption classification.",
+            )
         }
         entry.encodedName = encoded
         hasChanges = true
@@ -122,7 +141,8 @@ class RpfArchive private constructor(
 
     fun remove(entry: RpfEntry) {
         requireMember(entry)
-        val parent = entry.parent ?: throw IOException("The archive root cannot be deleted.")
+        val parent = entry.parent
+            ?: throw RpfException(RpfErrorCode.ROOT_DELETE_FORBIDDEN, "The archive root cannot be deleted.")
         val descendants = ArrayDeque<RpfEntry>()
         descendants.addLast(entry)
         while (descendants.isNotEmpty()) {
@@ -153,7 +173,10 @@ class RpfArchive private constructor(
     fun replace(entry: RpfFile, source: File) {
         requireMember(entry)
         if (entry.isResource && entry.isEntryEncrypted) {
-            throw IOException("Encrypted script resources cannot be replaced.")
+            throw RpfException(
+                RpfErrorCode.ENCRYPTED_RESOURCE_MUTATION,
+                "Encrypted script resources cannot be replaced.",
+            )
         }
         entry.payload = importedPayload(entry.name, source)
         hasChanges = true
@@ -185,14 +208,20 @@ class RpfArchive private constructor(
                 names.size().also {
                     val resultingSize = it + entry.encodedName.size + 1
                     if (resultingSize + paddingFor(resultingSize.toLong(), AES_BLOCK_SIZE) > MAX_NAME_TABLE_SIZE) {
-                        throw IOException("The archive's filename table is too large.")
+                        throw RpfException(
+                            RpfErrorCode.NAME_TABLE_TOO_LARGE,
+                            "The archive's filename table is too large.",
+                        )
                     }
                     names.write(entry.encodedName)
                     names.write(0)
                 }
             }
             if (entry is RpfFile && offset > MAX_FILE_NAME_OFFSET) {
-                throw IOException("The file name table exceeds the RPF7 limit for file entries.")
+                throw RpfException(
+                    RpfErrorCode.NAME_TABLE_TOO_LARGE,
+                    "The file name table exceeds the RPF7 limit for file entries.",
+                )
             }
             return offset
         }
@@ -220,7 +249,7 @@ class RpfArchive private constructor(
                 is RpfFile -> {
                     val payload = entry.payload
                     if (currentSector >= MAX_SECTOR) {
-                        throw IOException("The archive exceeds the RPF7 sector limit.")
+                        throw RpfException(RpfErrorCode.SECTOR_LIMIT, "The archive exceeds the RPF7 sector limit.")
                     }
                     val resourceBit = if (entry.isResource) RESOURCE_SECTOR_FLAG else 0
                     records.putShort(nameOffset.toShort())
@@ -259,11 +288,15 @@ class RpfArchive private constructor(
     private fun requireMember(entry: RpfEntry) {
         var top = entry
         while (top.parent != null) top = checkNotNull(top.parent)
-        if (top !== root) throw IOException("The entry does not belong to this archive.")
+        if (top !== root) {
+            throw RpfException(RpfErrorCode.ENTRY_NOT_IN_ARCHIVE, "The entry does not belong to this archive.")
+        }
     }
 
     private fun ensureEntryCapacity() {
-        if (entryCount == MAX_ENTRY_COUNT) throw IOException("The archive has too many entries.")
+        if (entryCount == MAX_ENTRY_COUNT) {
+            throw RpfException(RpfErrorCode.ENTRY_COUNT_LIMIT, "The archive has too many entries.")
+        }
     }
 
     private fun <T : RpfEntry> addChild(parent: RpfDirectory, entry: T): T {
@@ -278,11 +311,13 @@ class RpfArchive private constructor(
         fun open(file: File, aesKey: ByteArray? = null): RpfArchive {
             RandomAccessFile(file, "r").use { source ->
                 val fileSize = source.length()
-                if (fileSize < HEADER_SIZE) throw IOException("The file is not an RPF7 archive.")
+                if (fileSize < HEADER_SIZE) {
+                    throw RpfException(RpfErrorCode.INVALID_ARCHIVE, "The file is not an RPF7 archive.")
+                }
                 val header = source.readBuffer(HEADER_SIZE)
                 val magic = header.u32
                 if (magic != RPF7_MAGIC && magic != RPF7_ALTERNATE_MAGIC) {
-                    throw IOException("The file is not an RPF7 archive.")
+                    throw RpfException(RpfErrorCode.INVALID_ARCHIVE, "The file is not an RPF7 archive.")
                 }
                 val entryCount = header.u32
                 val namesSize = header.u32
@@ -291,13 +326,16 @@ class RpfArchive private constructor(
                 if (entryCount !in 1L..MAX_ENTRY_COUNT.toLong() ||
                     namesSize !in 1L..MAX_NAME_TABLE_SIZE.toLong() || tableEnd > fileSize
                 ) {
-                    throw IOException("The RPF7 header has an invalid file table or filename table size.")
+                    malformedFileTable("The RPF7 header has an invalid file table or filename table size.")
                 }
                 val key = when (encryption) {
                     ENCRYPTION_NONE, ENCRYPTION_OPEN -> null
                     ENCRYPTION_AES -> aesKey?.takeIf { it.size == 32 }?.copyOf()
-                        ?: throw IOException("This AES archive requires a 32-byte key.")
-                    else -> throw IOException("This archive uses unsupported table encryption.")
+                        ?: throw RpfException(RpfErrorCode.AES_KEY_REQUIRED, "This AES archive requires a 32-byte key.")
+                    else -> throw RpfException(
+                        RpfErrorCode.TABLE_ENCRYPTION_UNSUPPORTED,
+                        "This archive uses unsupported table encryption.",
+                    )
                 }
                 val recordTable = source.readBuffer(entryCount.toInt() * RECORD_SIZE).array()
                 val nameTable = source.readBuffer(namesSize.toInt()).array()
@@ -305,7 +343,7 @@ class RpfArchive private constructor(
                 val names = transformTable(nameTable, key, Cipher.DECRYPT_MODE)
                 val entries = readEntries(file, source, recordBytes, names, tableEnd)
                 val root = entries.first().first as? RpfDirectory
-                    ?: throw IOException("The RPF7 file table has no root directory.")
+                    ?: malformedFileTable("The RPF7 file table has no root directory.")
                 attachEntries(root, entries)
                 return RpfArchive(file, magic, encryption, key, root, entries.size)
             }
@@ -351,6 +389,9 @@ private fun RandomAccessFile.readBuffer(size: Int): ByteBuffer {
 
 private data class DirectoryRange(val first: Long, val count: Long)
 
+private fun malformedFileTable(detail: String): Nothing =
+    throw RpfException(RpfErrorCode.MALFORMED_FILE_TABLE, detail)
+
 private fun readEntries(
     file: File,
     source: RandomAccessFile,
@@ -366,7 +407,7 @@ private fun readEntries(
         record.position(position)
         val isDirectory = (record.getInt(position + 4).toLong() and 0xffffffffL) == DIRECTORY_TAG
         val nameOffset = if (isDirectory) record.u32 else (record.short.toInt() and 0xffff).toLong()
-        if (nameOffset >= names.size) throw IOException("An RPF7 filename points outside its table.")
+        if (nameOffset >= names.size) malformedFileTable("An RPF7 filename points outside its table.")
         val name = nameCache.getOrPut(nameOffset.toInt()) { readName(names, nameOffset.toInt()) }
         if (isDirectory) {
             record.int // Directory marker.
@@ -381,11 +422,11 @@ private fun readEntries(
             val storedSize = if (isResource) {
                 resourceSize(source, fileSize, offset, packedSize, metadata, extra)
             } else {
-                if (extra !in 0L..1L) throw IOException("An RPF7 binary entry has an invalid encryption flag.")
+                if (extra !in 0L..1L) malformedFileTable("An RPF7 binary entry has an invalid encryption flag.")
                 if (packedSize == 0) metadata else packedSize.toLong()
             }
             if (storedSize > 0 && (offset < tableEnd || offset > fileSize || storedSize > fileSize - offset)) {
-                throw IOException("An RPF7 entry points outside the archive.")
+                malformedFileTable("An RPF7 entry points outside the archive.")
             }
             val logicalSize = if (isResource) storedSize else metadata
             val payload = Payload(file, offset, storedSize, logicalSize, packedSize, metadata, extra, isResource)
@@ -397,10 +438,10 @@ private fun readEntries(
 private fun readName(names: ByteArray, offset: Int): ByteArray {
     var end = offset
     while (end < names.size && names[end] != 0.toByte()) {
-        if (end - offset >= 1024) throw IOException("An RPF7 filename is too long.")
+        if (end - offset >= 1024) malformedFileTable("An RPF7 filename is too long.")
         end++
     }
-    if (end == names.size) throw IOException("An RPF7 filename is missing its terminator.")
+    if (end == names.size) malformedFileTable("An RPF7 filename is missing its terminator.")
     return names.copyOfRange(offset, end)
 }
 
@@ -414,13 +455,13 @@ private fun attachEntries(root: RpfDirectory, entries: List<Pair<RpfEntry, Direc
         val children = checkNotNull(range)
         if (children.count == 0L) continue
         if (children.first < 1 || children.first + children.count > entries.size) {
-            throw IOException("An RPF7 directory points outside the file table.")
+            malformedFileTable("An RPF7 directory points outside the file table.")
         }
         val end = (children.first + children.count).toInt()
         for (index in children.first.toInt() until end) {
             val child = entries[index].first
             if (child === root || child.parent != null) {
-                throw IOException("The RPF7 directory tree contains a repeated entry.")
+                malformedFileTable("The RPF7 directory tree contains a repeated entry.")
             }
             child.parent = directory
             directory.mutableChildren.add(child)
@@ -428,7 +469,7 @@ private fun attachEntries(root: RpfDirectory, entries: List<Pair<RpfEntry, Direc
             if (child is RpfDirectory) pending.addLast(index)
         }
     }
-    if (attached != entries.size) throw IOException("The RPF7 file table contains disconnected entries.")
+    if (attached != entries.size) malformedFileTable("The RPF7 file table contains disconnected entries.")
 }
 
 private fun validateNewName(directory: RpfDirectory, name: String, except: RpfEntry? = null): ByteArray {
@@ -436,10 +477,13 @@ private fun validateNewName(directory: RpfDirectory, name: String, except: RpfEn
     if (name.isBlank() || name == "." || name == ".." || encoded.size > 255 ||
         name.any { it == '/' || it == '\\' || it.isISOControl() }
     ) {
-        throw IOException("Enter a filename of 1–255 bytes with no slashes or control characters.")
+        throw RpfException(
+            RpfErrorCode.INVALID_NAME,
+            "Enter a filename of 1–255 bytes with no slashes or control characters.",
+        )
     }
     if (directory.children.any { it !== except && it.name.equals(name, ignoreCase = true) }) {
-        throw IOException("A file or folder with this name already exists.")
+        throw RpfException(RpfErrorCode.DUPLICATE_NAME, "A file or folder with this name already exists.")
     }
     return encoded
 }
@@ -447,12 +491,17 @@ private fun validateNewName(directory: RpfDirectory, name: String, except: RpfEn
 private fun importedPayload(name: String, source: File): Payload {
     RandomAccessFile(source, "r").use { file ->
         val size = file.length()
-        if (size > 0xffffffffL) throw IOException("The selected file exceeds the RPF7 file size limit.")
+        if (size > 0xffffffffL) {
+            throw RpfException(RpfErrorCode.FILE_SIZE_LIMIT, "The selected file exceeds the RPF7 file size limit.")
+        }
         if (size >= RESOURCE_HEADER_SIZE) {
             val header = file.readBuffer(RESOURCE_HEADER_SIZE)
             if (header.u32 == RESOURCE_MAGIC) {
                 if (name.isScriptResource()) {
-                    throw IOException("Encrypted script resources cannot be added or replaced.")
+                    throw RpfException(
+                        RpfErrorCode.ENCRYPTED_RESOURCE_MUTATION,
+                        "Encrypted script resources cannot be added or replaced.",
+                    )
                 }
                 header.u32 // Resource version.
                 val systemFlags = header.u32
@@ -477,14 +526,16 @@ private fun resourceSize(
     0 -> resourcePageSize(systemFlags) + resourcePageSize(graphicsFlags)
     MAX_PACKED_SIZE -> {
         if (offset > archiveSize - RESOURCE_HEADER_SIZE) {
-            throw IOException("The archive contains a truncated resource header.")
+            throw RpfException(RpfErrorCode.MALFORMED_RESOURCE, "The archive contains a truncated resource header.")
         }
         source.seek(offset)
         val header = source.readBuffer(RESOURCE_HEADER_SIZE).array()
         val size = RESOURCE_SIZE_BYTE_OFFSETS.withIndex().fold(0L) { value, (index, position) ->
             value or ((header[position].toLong() and 0xff) shl (8 * index))
         }
-        if (size < MAX_PACKED_SIZE) throw IOException("An RPF7 resource has an invalid extended size.")
+        if (size < MAX_PACKED_SIZE) {
+            throw RpfException(RpfErrorCode.MALFORMED_RESOURCE, "An RPF7 resource has an invalid extended size.")
+        }
         size
     }
     else -> packedSize.toLong()
@@ -504,7 +555,9 @@ private val RESOURCE_SIZE_BYTE_OFFSETS = intArrayOf(7, 14, 5, 2)
 private fun extractResource(payload: Payload, source: RandomAccessFile, output: OutputStream) {
     var length = payload.storedSize
     if (payload.packedSize != 0) {
-        if (length < RESOURCE_HEADER_SIZE) throw IOException("The RPF7 resource header is truncated.")
+        if (length < RESOURCE_HEADER_SIZE) {
+            throw RpfException(RpfErrorCode.MALFORMED_RESOURCE, "The RPF7 resource header is truncated.")
+        }
         val version = ((payload.metadata ushr 28) shl 4) or (payload.extra ushr 28)
         val header = ByteBuffer.allocate(RESOURCE_HEADER_SIZE).order(ByteOrder.LITTLE_ENDIAN)
             .putInt(RESOURCE_MAGIC.toInt()).putInt(version.toInt())
@@ -533,7 +586,7 @@ private fun writeResourceOrRaw(payload: Payload, source: RandomAccessFile, outpu
 private fun aesCipher(key: ByteArray, mode: Int): Cipher = try {
     Cipher.getInstance("AES/ECB/NoPadding").apply { init(mode, SecretKeySpec(key, "AES")) }
 } catch (exception: GeneralSecurityException) {
-    throw IOException("The archive's AES operation could not be initialized.", exception)
+    throw RpfException(RpfErrorCode.AES_FAILED, "The archive's AES operation could not be initialized.", exception)
 }
 
 private fun transformTable(bytes: ByteArray, key: ByteArray?, mode: Int): ByteArray {
@@ -544,7 +597,7 @@ private fun transformTable(bytes: ByteArray, key: ByteArray?, mode: Int): ByteAr
         val transformed = aesCipher(key, mode).doFinal(bytes, 0, alignedSize)
         transformed.copyInto(bytes)
     } catch (exception: GeneralSecurityException) {
-        throw IOException("The archive's AES table could not be processed.", exception)
+        throw RpfException(RpfErrorCode.AES_FAILED, "The archive's AES table could not be processed.", exception)
     }
     return bytes
 }
@@ -558,7 +611,7 @@ private fun copyExactly(input: InputStream, output: OutputStream, length: Long, 
     var remaining = length
     while (remaining > 0) {
         val count = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
-        if (count <= 0) throw IOException("The archive entry is truncated.")
+        if (count <= 0) throw RpfException(RpfErrorCode.ENTRY_TRUNCATED, "The archive entry is truncated.")
         output.write(buffer, 0, count)
         remaining -= count
     }
@@ -568,7 +621,7 @@ private class ArchiveSlice(private val file: RandomAccessFile, private var remai
     override fun read(): Int {
         if (remaining == 0L) return -1
         val byte = file.read()
-        if (byte == -1) throw IOException("The archive entry is truncated.")
+        if (byte == -1) throw RpfException(RpfErrorCode.ENTRY_TRUNCATED, "The archive entry is truncated.")
         remaining--
         return byte
     }
@@ -577,7 +630,7 @@ private class ArchiveSlice(private val file: RandomAccessFile, private var remai
         if (length == 0) return 0
         if (remaining == 0L) return -1
         val count = file.read(bytes, offset, minOf(remaining, length.toLong()).toInt())
-        if (count == -1) throw IOException("The archive entry is truncated.")
+        if (count == -1) throw RpfException(RpfErrorCode.ENTRY_TRUNCATED, "The archive entry is truncated.")
         remaining -= count
         return count
     }

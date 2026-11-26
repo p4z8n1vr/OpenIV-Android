@@ -1,10 +1,12 @@
 # OpenIV Archive Editor for Android
 
-An Android editor for local RPF7 archives, with English as the default interface language. Open an archive through Android’s file picker, browse directories and nested archives, search the current folder, and extract a file or folder to a location you choose. In the entry menu, you can edit UTF-8 text up to 1 MiB, replace files, rename entries, or delete entries. Touch and hold a folder to open its entry menu.
+An Android editor for local RPF7 archives. The interface follows Android’s language settings, with Indonesian available and English as the default. Open an archive through Android’s file picker, browse directories and nested archives, search the current folder, and extract a file or folder to a location you choose. In the entry menu, you can edit UTF-8 text up to 1 MiB, replace files, rename entries, or delete entries. Touch and hold a folder to open its entry menu.
 
 Use **Archive actions** to add a file, create a text entry, check archive information, or save an edited copy. To include a nested archive’s edits in its parent, choose **Apply to parent archive**, then save a copy of the parent. The app keeps working files in its private cache and uses Android’s Storage Access Framework for input and output.
 
 The editor supports plain, OPEN, and AES RPF7 file tables. For AES, choose **Load AES key** on the start screen and select your own raw 32-byte key file. RSC7 resources are extracted as standalone resource files. NG-encrypted file tables and editing encrypted script resources are unsupported.
+
+**Access status** checks whether the installed root manager grants the app access through `su` and reports the status of the Shizuku connection and permission. The app uses Android’s file picker for archive operations.
 
 ## Build
 
@@ -28,5 +30,7 @@ sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0' 'ndk;28.2.13676358' 'cm
 ```
 
 The debug APK is at `app/build/outputs/apk/debug/app-debug.apk`. The archive reader streams DEFLATE data through C++23 and zlib, with a JVM fallback when the native library is unavailable.
+
+GitHub Actions builds and lints the app on pushes and pull requests to `main`. Each successful run uploads the debug APK as the `openiv-android-debug` artifact.
 
 The RPF7 format implementation was checked against the public CodeWalker format reference. [RPF7 format reference](https://github.com/dexyfex/CodeWalker/blob/master/CodeWalker.Core/GameFiles/RpfFile.cs)
