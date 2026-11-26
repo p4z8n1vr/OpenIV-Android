@@ -11,6 +11,9 @@
     <string name="search_hint">Search this folder</string>
     <string name="root_folder">Archive root</string>
     <string name="back">Go back</string>
+    <string name="back_symbol" translatable="false">‹</string>
+    <string name="more_symbol" translatable="false">⋮</string>
+    <string name="entry_detail_separator" translatable="false">" · "</string>
     <string name="empty_folder">This folder is empty.</string>
     <string name="no_results">No matching entries.</string>
     <string name="folder">Folder</string>
@@ -26,9 +29,10 @@
     <string name="archive_info">Archive information</string>
     <string name="archive_format">Format: RPF7</string>
     <string name="archive_encryption">Encryption: %1$s</string>
+    <string name="encryption_unencrypted">Unencrypted</string>
     <string name="archive_entries">Entries: %1$d</string>
     <string name="archive_depth">Archive level: %1$d</string>
-    <string name="archive_path_separator" translatable="false"> / </string>
+    <string name="archive_path_separator" translatable="false">" / "</string>
     <string name="nested_archive">Open nested archive</string>
     <string name="view_edit_text">View or edit text</string>
     <string name="rename">Rename</string>
@@ -58,6 +62,26 @@
     <string name="error_text_size">The text editor supports files up to 1 MiB.</string>
     <string name="error_text_encoding">This entry is not a UTF-8 text file.</string>
     <string name="error_export_name">An entry has a name that cannot be exported to a document.</string>
+    <string name="error_rpf_entry_encryption_unsupported">This entry uses unsupported encryption.</string>
+    <string name="error_rpf_root_rename_forbidden">The archive root must keep its original name.</string>
+    <string name="error_rpf_root_delete_forbidden">The archive root must stay in the archive.</string>
+    <string name="error_rpf_resource_encryption_rename">Choose a name that preserves the resource’s encryption type.</string>
+    <string name="error_rpf_encrypted_resource_mutation">Adding or replacing encrypted script resources is unsupported.</string>
+    <string name="error_rpf_name_table_too_large">The filename table exceeds the RPF7 size limit.</string>
+    <string name="error_rpf_sector_limit">The archive exceeds the RPF7 sector limit.</string>
+    <string name="error_rpf_entry_not_in_archive">This entry is unavailable in the current archive.</string>
+    <string name="error_rpf_entry_count_limit">The archive has reached its entry limit.</string>
+    <string name="error_rpf_invalid_archive">Select an RPF7 archive.</string>
+    <string name="error_rpf_malformed_file_table">The archive has an invalid file table, filename table, or directory.</string>
+    <string name="error_rpf_aes_key_required">Load a raw 32-byte AES key to open this archive.</string>
+    <string name="error_rpf_table_encryption_unsupported">The archive table uses unsupported encryption.</string>
+    <string name="error_rpf_malformed_resource">The archive contains an invalid RPF7 resource header.</string>
+    <string name="error_rpf_invalid_name">Enter a filename of 1–255 bytes without slashes or control characters.</string>
+    <string name="error_rpf_duplicate_name">A file or folder with this name already exists.</string>
+    <string name="error_rpf_file_size_limit">The selected file exceeds the RPF7 file size limit.</string>
+    <string name="error_rpf_aes_failed">The AES operation failed. Check the key and archive.</string>
+    <string name="error_rpf_entry_truncated">The archive entry is incomplete.</string>
+    <string name="error_rpf_deflate_failed">The compressed archive entry could not be read.</string>
     <string name="entry_added">File added.</string>
     <string name="entry_updated">File updated.</string>
     <string name="entry_deleted">Entry deleted.</string>
@@ -65,8 +89,21 @@
     <string name="file_fallback">file</string>
     <string name="archive_fallback">archive.rpf</string>
     <string name="folder_fallback">archive</string>
-    <plurals name="folder_entries">
-        <item quantity="one">%d entry</item>
-        <item quantity="other">%d entries</item>
-    </plurals>
+    <string name="access_diagnostics">Access status</string>
+    <string name="access_checking">Checking access status…</string>
+    <string name="access_root">Root access</string>
+    <string name="access_shizuku" translatable="false">Shizuku</string>
+    <string name="access_root_accessible">Root access available</string>
+    <string name="access_root_missing">su executable is missing</string>
+    <string name="access_root_denied">Root access unavailable or denied</string>
+    <string name="access_root_timeout">Root access check timed out</string>
+    <string name="access_shizuku_adb_granted">ADB mode · permission granted</string>
+    <string name="access_shizuku_adb_denied">ADB mode · permission needed</string>
+    <string name="access_shizuku_root_granted">Root mode · permission granted</string>
+    <string name="access_shizuku_root_denied">Root mode · permission needed</string>
+    <string name="access_shizuku_other_granted">Connected · permission granted</string>
+    <string name="access_shizuku_other_denied">Connected · permission needed</string>
+    <string name="access_shizuku_offline">Installed · disconnected</string>
+    <string name="access_shizuku_missing">Shizuku Manager was not detected</string>
+    <string name="access_shizuku_unsupported">This Shizuku version is unsupported</string>
 </resources>

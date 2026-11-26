@@ -6,6 +6,11 @@ import java.io.OutputStream
 import java.util.zip.DataFormatException
 import java.util.zip.Inflater
 
+internal class NativeDeflateException @JvmOverloads constructor(
+    override val message: String,
+    cause: Throwable? = null,
+) : IOException(message, cause)
+
 /** Streams a raw (RFC 1951) DEFLATE payload from a bounded archive entry. */
 object NativeDeflate {
     private const val BUFFER_SIZE = 32 * 1024
@@ -30,7 +35,7 @@ object NativeDeflate {
         require(expectedSize == null || expectedSize >= 0)
         require(maxOutputSize >= 0)
         if (expectedSize != null && expectedSize > maxOutputSize) {
-            throw IOException("Decompressed payload exceeds its size limit")
+            throw NativeDeflateException("Decompressed payload exceeds its size limit")
         }
 
         val outputLimit = expectedSize ?: maxOutputSize
@@ -40,7 +45,7 @@ object NativeDeflate {
             inflateJvm(input, output, compressedSize, outputLimit)
         }
         if (expectedSize != null && written != expectedSize) {
-            throw IOException("Decompressed payload size does not match its archive entry")
+            throw NativeDeflateException("Decompressed payload size does not match its archive entry")
         }
         return written
     }
@@ -69,9 +74,9 @@ object NativeDeflate {
                 if (inflater.needsInput() && remaining > 0) {
                     val requested = minOf(source.size.toLong(), remaining).toInt()
                     val count = input.read(source, 0, requested)
-                    if (count < 0) throw IOException("Truncated raw DEFLATE payload")
+                    if (count < 0) throw NativeDeflateException("Truncated raw DEFLATE payload")
                     if (count == 0 || count > requested) {
-                        throw IOException("Input stream returned an invalid byte count")
+                        throw NativeDeflateException("Input stream returned an invalid byte count")
                     }
                     remaining -= count
                     inflater.setInput(source, 0, count)
@@ -80,17 +85,17 @@ object NativeDeflate {
                 val inputBefore = inflater.bytesRead
                 val count = inflater.inflate(destination)
                 if (count.toLong() > outputLimit - written) {
-                    throw IOException("Decompressed payload exceeds its size limit")
+                    throw NativeDeflateException("Decompressed payload exceeds its size limit")
                 }
                 if (count > 0) {
                     output.write(destination, 0, count)
                     written += count
                 } else if (!inflater.finished() && inflater.bytesRead == inputBefore) {
-                    throw IOException("Incomplete raw DEFLATE payload")
+                    throw NativeDeflateException("Incomplete raw DEFLATE payload")
                 }
             }
         } catch (exception: DataFormatException) {
-            throw IOException("Invalid raw DEFLATE payload", exception)
+            throw NativeDeflateException("Invalid raw DEFLATE payload", exception)
         } finally {
             inflater.end()
         }

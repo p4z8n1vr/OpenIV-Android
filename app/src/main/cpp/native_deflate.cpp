@@ -8,8 +8,8 @@ namespace {
 
 constexpr jsize bufferSize = 32 * 1024;
 
-void throwIOException(JNIEnv* env, const char* message) {
-    const jclass exceptionClass = env->FindClass("java/io/IOException");
+void throwDeflateException(JNIEnv* env, const char* message) {
+    const jclass exceptionClass = env->FindClass("io/github/p4z8n1vr/openiv/nativeio/NativeDeflateException");
     if (exceptionClass != nullptr) {
         env->ThrowNew(exceptionClass, message);
     }
@@ -42,7 +42,7 @@ extern "C" JNIEXPORT jlong JNICALL
 Java_io_github_p4z8n1vr_openiv_nativeio_NativeDeflate_inflateNative(
         JNIEnv* env, jobject, jobject input, jobject output, jlong compressedSize, jlong outputLimit) {
     if (compressedSize < 0 || outputLimit < 0) {
-        throwIOException(env, "Invalid raw DEFLATE size limits");
+        throwDeflateException(env, "Invalid raw DEFLATE size limits");
         return 0;
     }
 
@@ -74,7 +74,7 @@ Java_io_github_p4z8n1vr_openiv_nativeio_NativeDeflate_inflateNative(
 
     RawInflater inflater;
     if (!inflater.initialized()) {
-        throwIOException(env, "Could not initialize raw DEFLATE decompression");
+        throwDeflateException(env, "Could not initialize raw DEFLATE decompression");
         return 0;
     }
 
@@ -92,11 +92,11 @@ Java_io_github_p4z8n1vr_openiv_nativeio_NativeDeflate_inflateNative(
                 return 0;
             }
             if (count < 0) {
-                throwIOException(env, "Truncated raw DEFLATE payload");
+                throwDeflateException(env, "Truncated raw DEFLATE payload");
                 return 0;
             }
             if (count == 0 || count > requested) {
-                throwIOException(env, "Input stream returned an invalid byte count");
+                throwDeflateException(env, "Input stream returned an invalid byte count");
                 return 0;
             }
 
@@ -114,13 +114,13 @@ Java_io_github_p4z8n1vr_openiv_nativeio_NativeDeflate_inflateNative(
         stream.avail_out = bufferSize;
         const int result = inflate(&stream, Z_NO_FLUSH);
         if (result != Z_OK && result != Z_STREAM_END && result != Z_BUF_ERROR) {
-            throwIOException(env, "Invalid raw DEFLATE payload");
+            throwDeflateException(env, "Invalid raw DEFLATE payload");
             return 0;
         }
 
         const auto count = static_cast<jint>(bufferSize - stream.avail_out);
         if (count > outputLimit - written) {
-            throwIOException(env, "Decompressed payload exceeds its size limit");
+            throwDeflateException(env, "Decompressed payload exceeds its size limit");
             return 0;
         }
         if (count > 0) {
@@ -139,7 +139,7 @@ Java_io_github_p4z8n1vr_openiv_nativeio_NativeDeflate_inflateNative(
             return written;
         }
         if (count == 0 && stream.avail_in == inputBefore) {
-            throwIOException(env, "Incomplete raw DEFLATE payload");
+            throwDeflateException(env, "Incomplete raw DEFLATE payload");
             return 0;
         }
     }
